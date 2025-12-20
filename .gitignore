@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+cufile.log
+
+# Build artifacts
+build/
+*.o
+*.a
+
+# Internal scripts (not for publication)
+scripts/generate_charts.py
+scripts/generate_complete_comparison.py
+scripts/generate_tokenization_comparison.py
+scripts/generate_charts_v2.py
+scripts/run_comprehensive_benchmark.sh
+scripts/run_detailed_timing_benchmark.sh
