@@ -17,15 +17,18 @@ This project explores offloading tokenization to the NVIDIA BlueField-3 DPU. By 
 | Component | Specification |
 |:----------|:--------------|
 | DPU | NVIDIA BlueField-3 (ARM Cortex-A78, 16 cores) |
+| Host CPU | x86_64 (benchmark comparison) |
 | GPU | NVIDIA A100X (ConnectX-integrated) |
 | Network | PCIe Gen4 x16, GPUDirect RDMA |
 
 ```
-┌────────────────────┐                    ┌────────────────────┐
-│   BlueField-3 DPU  │   PCIe Gen4 x16    │    Host System     │
-│    (ARM Cores)     │◄──────────────────►│    (A100X GPU)     │
-│   192.168.200.2    │  GPUDirect RDMA    │   192.168.200.1    │
-└────────────────────┘                    └────────────────────┘
+┌────────────────────┐                    ┌─────────────────────────────────┐
+│   BlueField-3 DPU  │   PCIe Gen4 x16    │         Host System             │
+│    (ARM Cores)     │◄──────────────────►│  ┌─────────┐    ┌───────────┐  │
+│   192.168.200.2    │  GPUDirect RDMA    │  │ Host CPU│    │ A100X GPU │  │
+└────────────────────┘                    │  └─────────┘    └───────────┘  │
+                                          │  192.168.200.1                  │
+                                          └─────────────────────────────────┘
 ```
 
 ---
@@ -36,7 +39,8 @@ This project explores offloading tokenization to the NVIDIA BlueField-3 DPU. By 
 
 | Scenario | Pipeline |
 |:---------|:---------|
-| **DPU-Based** | Tokenize on DPU → RDMA (tokens) → GPU Embed |
+| **DPU-Based** | Tokenize on DPU ARM → RDMA (tokens) → GPU Embed |
+| **CPU-Based** | Tokenize on Host CPU → Copy to GPU → GPU Embed |
 | **GPU-Based** | RDMA (raw text) → Tokenize on GPU → GPU Embed |
 
 ### Tokenization Algorithms
@@ -45,8 +49,8 @@ Two algorithms were tested to evaluate different computational characteristics:
 
 | Algorithm | Vocabulary | Nature | Compatible Models |
 |:----------|:-----------|:-------|:------------------|
-| **WordPiece** | 30,522 (BERT) | Parallelizable | BERT, DistilBERT |
 | **BPE** | 50,257 (GPT-2) | Sequential | GPT-2/3, LLaMA |
+| **WordPiece** | 30,522 (BERT) | Parallelizable | BERT, DistilBERT |
 
 ### Test Configuration
 
@@ -58,42 +62,45 @@ Two algorithms were tested to evaluate different computational characteristics:
 
 ## Results
 
-### Tokenization Performance (8KB Payload)
+### Three-Way Tokenization Comparison (8KB Payload)
 
-![Tokenization Comparison](charts/8kb_tokenization_comparison.png)
+![Tokenization Comparison](charts/tokenization_comparison_3way.png)
 
-| Method | DPU-Based | GPU-Based | Speedup |
-|:-------|:----------|:----------|:--------|
-| **WordPiece** | 1,275 µs | 1,316 µs | ~1× |
-| **BPE** | 531 µs | 9,235 µs | **17×** |
+| Algorithm | DPU ARM | Host CPU | GPU | Best Platform |
+|:----------|:--------|:---------|:----|:--------------|
+| **BPE** | 531 µs | 2,680 µs | 9,235 µs | **DPU (17× vs GPU, 5× vs CPU)** |
+| **WordPiece** | 1,275 µs | 4,756 µs | 1,316 µs | **DPU/GPU (~equal)** |
 
-### Pipeline Timeline
+### BPE Speedup Analysis
 
-#### WordPiece
+![BPE Speedup](charts/bpe_speedup_3way.png)
 
-![WordPiece Timeline](charts/8kb_wordpiece_timeline.png)
+For sequential BPE tokenization (GPT-2/LLaMA models):
+- **DPU ARM is 17× faster than GPU** (sequential CUDA kernel)
+- **DPU ARM is 5× faster than Host CPU** (same HuggingFace backend)
 
-| Stage | DPU-Based | GPU-Based |
-|:------|:----------|:----------|
-| Tokenization | 1,275 µs | 1,316 µs |
-| RDMA Transfer | 1,011 µs | 1,019 µs |
-| GPU Compute | 46 µs | 46 µs |
-| **Total** | **2,332 µs** | **2,381 µs** |
+### Pipeline Timeline (BPE)
 
-#### BPE
+![BPE Pipeline](charts/bpe_pipeline_3way.png)
 
-![BPE Timeline](charts/8kb_bpe_timeline.png)
+| Stage | DPU-Based | CPU-Based | GPU-Based |
+|:------|:----------|:----------|:----------|
+| Tokenization | 531 µs | 2,680 µs | 9,235 µs |
+| RDMA Transfer | 1,011 µs | 1,011 µs | 1,011 µs |
+| GPU Embedding | 46 µs | 46 µs | 46 µs |
+| **Total** | **1,588 µs** | **3,737 µs** | **10,292 µs** |
 
-| Stage | DPU-Based | GPU-Based |
-|:------|:----------|:----------|
-| Tokenization | 531 µs | 9,235 µs |
-| RDMA Transfer | 1,011 µs | 1,019 µs |
-| GPU Compute | 46 µs | 46 µs |
-| **Total** | **1,588 µs** | **10,300 µs** |
+### End-to-End Latency Breakdown
 
-### End-to-End Response Time
+![Latency Breakdown](charts/latency_breakdown_3way.png)
 
-![Latency Comparison](charts/8kb_latency_comparison.png)
+### WordPiece Comparison
+
+![WordPiece Comparison](charts/wordpiece_comparison_3way.png)
+
+For parallelizable WordPiece tokenization (BERT models):
+- DPU and GPU achieve similar performance (~1,300 µs)
+- Host CPU is slower (4,756 µs) due to lack of GPU acceleration
 
 ---
 
@@ -101,34 +108,37 @@ Two algorithms were tested to evaluate different computational characteristics:
 
 ### Tokenizers
 
-| Platform | Algorithm | Implementation |
-|:---------|:----------|:---------------|
-| **DPU** | BPE | C sequential (`src/dpu_client/bpe_tokenizer.c`) |
-| **DPU** | WordPiece | HuggingFace Tokenizers (Rust, `scripts/wordpiece_tokenizer.py`) |
-| **GPU** | BPE | CUDA sequential (`src/host_server/tokenizer_kernel.cu`) |
-| **GPU** | WordPiece | RAPIDS nvtext (`pylibcudf.nvtext.wordpiece_tokenize`) |
+| Platform | Algorithm | Implementation | Time (8KB) |
+|:---------|:----------|:---------------|:-----------|
+| **DPU ARM** | BPE | C sequential (`bpe_tokenizer.c`) | 531 µs |
+| **DPU ARM** | WordPiece | HuggingFace Tokenizers (Rust) | 1,275 µs |
+| **Host CPU** | BPE | HuggingFace Tokenizers (Rust) | 2,680 µs |
+| **Host CPU** | WordPiece | HuggingFace Tokenizers (Rust) | 4,756 µs |
+| **GPU** | BPE | CUDA sequential (`tokenizer_kernel.cu`) | 9,235 µs |
+| **GPU** | WordPiece | RAPIDS nvtext | 1,316 µs |
 
-### DPU Tokenizers
+### DPU BPE Tokenizer
 
 ```c
-// BPE: src/dpu_client/bpe_tokenizer.c
+// src/dpu_client/bpe_tokenizer.c
 BPEContext ctx;
 bpe_init(&ctx, "vocab.json", "merges.txt");  // 50,257 tokens, 49,992 merges
 int num_tokens = bpe_encode(&ctx, text, text_len, output_ids, max_len);
 ```
 
+### Host CPU Benchmark
+
 ```python
-# WordPiece: scripts/wordpiece_tokenizer.py (uses HuggingFace Tokenizers)
+# scripts/cpu_tokenizer_benchmark.py
 from tokenizers import Tokenizer
-tokenizer = Tokenizer.from_file("bert-base-uncased.json")
-output = tokenizer.encode(text)
-token_ids = output.ids
+tokenizer = Tokenizer.from_pretrained("gpt2")  # or "bert-base-uncased"
+result = tokenizer.encode(text)
 ```
 
 ### GPU Tokenizers
 
 ```python
-# WordPiece: scripts/wordpiece_tokenizer.py (RAPIDS nvtext)
+# WordPiece: RAPIDS nvtext (GPU-accelerated)
 from pylibcudf.nvtext.wordpiece_tokenize import wordpiece_tokenize
 result = wordpiece_tokenize(input_col, vocab, max_sequence_length)
 ```
@@ -147,15 +157,37 @@ output[i] = word_embed[token_id] + pos_embed[position];
 
 ---
 
+## Key Findings
+
+1. **BPE on DPU is optimal**: 17× faster than GPU, 5× faster than Host CPU
+   - Sequential algorithm doesn't benefit from GPU parallelism
+   - DPU ARM cores with optimized C code outperform all alternatives
+
+2. **WordPiece: DPU ≈ GPU**: Both achieve ~1,300 µs
+   - Parallelizable algorithm benefits from GPU (RAPIDS nvtext)
+   - Choose based on system architecture preferences
+
+3. **Recommendation**:
+   - **GPT-2/LLaMA models**: Use DPU-based tokenization
+   - **BERT models**: Either DPU or GPU works well
+
+---
+
 ## Build & Run
 
 See [docs/Build.md](docs/Build.md) for repository structure, build instructions, and benchmark execution.
+
+### Quick CPU Benchmark
+
+```bash
+python scripts/cpu_tokenizer_benchmark.py --payload-kb 8 --iterations 10
+```
 
 ---
 
 ## About
 
-**National Tsing Hua University (NTHU)**  
+**National Tsing Hua University (NTHU)**
 **Large-Scale System Architecture Laboratory (LSAlab)**
 
 Advisor: Prof. Jerry (Chi-Yuan) Chou (周志遠) - jchou@cs.nthu.edu.tw

@@ -9,12 +9,15 @@
 
 ## Executive Summary
 
-This report presents the performance evaluation of tokenization offloading to NVIDIA BlueField-3 DPU for LLM inference preprocessing. We compare two approaches:
+This report presents the performance evaluation of tokenization offloading to NVIDIA BlueField-3 DPU for LLM inference preprocessing. We compare three approaches:
 
 - **DPU-Based**: Tokenization on DPU ARM cores, only embedding lookup on GPU
+- **CPU-Based**: Tokenization on Host CPU, then transfer to GPU for embedding
 - **GPU-Based**: Raw text transfer, tokenization + embedding on GPU
 
-**Key Finding**: DPU-Based tokenization achieves **15-33% GPU compute time reduction** while offloading preprocessing workload from the GPU, making it suitable for high-throughput inference scenarios.
+**Key Finding**: For BPE tokenization (GPT-2/LLaMA), DPU-Based achieves:
+- **17× faster than GPU** (531 µs vs 9,235 µs)
+- **5× faster than Host CPU** (531 µs vs 2,680 µs)
 
 ---
 
@@ -103,6 +106,27 @@ This report presents the performance evaluation of tokenization offloading to NV
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+#### CPU-Based Tokenization (New)
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         CPU-Based Tokenization                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌───────────────────────────────────────────────────────────────────┐    │
+│   │                        Host System                                │    │
+│   │                                                                   │    │
+│   │   Text ──▶ [BPE Tokenizer] ──▶ Token IDs ──▶ [Embedding Lookup]  │    │
+│   │            (Host CPU)           (Copy)        (CUDA Kernel)       │    │
+│   │            HuggingFace Rust                                       │    │
+│   │                                                                   │    │
+│   └───────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│   CPU Work: BPE Tokenization (~2,680 µs)                                   │
+│   GPU Work: Embedding Only (~46 µs)                                        │
+│   Transfer: Host Memory → GPU Memory (PCIe)                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 
 ### 2.2 Test Parameters
 
@@ -137,16 +161,19 @@ We implement **two production-grade tokenization algorithms**:
 
 | Scenario | Tokenizer | Platform | Time | Notes |
 |:---------|:----------|:---------|:-----|:------|
-| **DPU-Based** | BPE | DPU ARM | 531 µs | GPT-2/3/LLaMA |
+| **DPU-Based** | BPE | DPU ARM | **531 µs** | C sequential (fastest) |
+| CPU-Based | BPE | Host CPU | 2,680 µs | HuggingFace Rust |
 | GPU-Based | BPE | GPU CUDA | 9,235 µs | Sequential = slow |
-| **DPU-Based** | WordPiece | DPU ARM | 1,275 µs | HuggingFace Rust |
-| **GPU-Based** | **WordPiece** | **GPU CUDA** | **1,316 µs** | RAPIDS nvtext |
+| **DPU-Based** | WordPiece | DPU ARM | **1,275 µs** | HuggingFace Rust |
+| **GPU-Based** | WordPiece | GPU CUDA | **1,316 µs** | RAPIDS nvtext |
+| CPU-Based | WordPiece | Host CPU | 4,756 µs | HuggingFace Rust |
 
 #### Key Finding
 
-- **BPE on GPU is 17× slower** than DPU due to sequential algorithm
-- **WordPiece**: DPU (1,275 µs) and GPU (1,316 µs) are nearly identical
-- Choice depends on target model: GPT-2 → use DPU BPE, BERT → use either
+- **BPE**: DPU is 17× faster than GPU, 5× faster than Host CPU
+- **WordPiece**: DPU and GPU are nearly identical (~1,300 µs)
+- **Host CPU is slowest** for both algorithms
+- Recommendation: GPT-2/LLaMA → use DPU, BERT → use DPU or GPU
 
 
 
@@ -167,40 +194,57 @@ We implement **two production-grade tokenization algorithms**:
 | GPU Compute | **46** | GPU |
 | **Total** | **1,809** | - |
 
-#### GPU-Based Tokenization (Real BPE)
+#### CPU-Based Tokenization (New)
+
+| Stage | Time (µs) | Location |
+|:------|:----------|:---------|
+| Text Generation | ~200 | Host CPU |
+| BPE Tokenization | 2,680 | Host CPU (HuggingFace) |
+| Memory Transfer | ~50 | PCIe |
+| GPU Compute | **46** | GPU |
+| **Total** | **~2,976** | - |
+
+#### GPU-Based Tokenization (BPE)
 
 | Stage | Time (µs) | Location |
 |:------|:----------|:---------|
 | Text Generation | 211 | DPU ARM |
-| WordPiece Tokenization | 1,316 | GPU (nvtext) |
+| BPE Tokenization | 9,235 | GPU (CUDA sequential) |
 | RDMA Transfer | 1,019 | Network |
 | GPU Compute (Embed) | **46** | GPU |
-| **Total** | **2,381** | - |
+| **Total** | **10,511** | - |
 
-> **Finding**: GPU WordPiece (nvtext) achieves 1,316 µs for 8KB payload.
+> **Finding**: GPU BPE is extremely slow (9,235 µs) due to sequential execution on GPU.
 
-### 3.2 WordPiece Tokenization Performance
+### 3.2 Three-Way Tokenization Comparison
 
-![Tokenization Comparison](../charts/8kb_tokenization_comparison.png)
+![Tokenization Comparison](../charts/tokenization_comparison_3way.png)
 
-| Metric | DPU-Based | GPU-Based | Result |
-|:-------|:----------|:----------|:-------|
-| WordPiece Time | 1,275 µs | 1,316 µs | **Nearly identical (~3%)** |
-| Implementation | HuggingFace Rust | RAPIDS nvtext | - |
+| Algorithm | DPU ARM | Host CPU | GPU | Best Platform |
+|:----------|:--------|:---------|:----|:--------------|
+| **BPE** | 531 µs | 2,680 µs | 9,235 µs | **DPU (17× vs GPU)** |
+| **WordPiece** | 1,275 µs | 4,756 µs | 1,316 µs | **DPU/GPU (~equal)** |
 
-### 3.3 Pipeline Timeline Comparison
+### 3.3 BPE Pipeline Timeline (Three-Way)
 
-![WordPiece Timeline](../charts/8kb_wordpiece_timeline.png)
+![BPE Pipeline](../charts/bpe_pipeline_3way.png)
 
 The timeline visualization shows:
-- DPU-Based has tokenization on DPU (1,275 µs) and very fast GPU compute (46 µs)
-- GPU-Based has GPU tokenization (1,316 µs) and same GPU compute (46 µs)
-- End-to-end latency is **nearly identical** for both approaches
+- **DPU-Based**: Fastest total latency (1,588 µs)
+- **CPU-Based**: Middle ground (3,737 µs)
+- **GPU-Based**: Slowest due to sequential BPE on GPU (10,292 µs)
 
+### 3.4 BPE Speedup Analysis
 
-### 3.4 Latency Comparison
+![BPE Speedup](../charts/bpe_speedup_3way.png)
 
-![Latency Comparison](../charts/8kb_latency_comparison.png)
+For sequential BPE tokenization:
+- DPU ARM is **17× faster** than GPU
+- DPU ARM is **5× faster** than Host CPU
+
+### 3.5 Latency Breakdown
+
+![Latency Breakdown](../charts/latency_breakdown_3way.png)
 
 
 ---
@@ -215,28 +259,33 @@ The DPU-Based approach consistently achieves **15-33% reduction** in GPU compute
 2. Tokenization (string processing) is offloaded to DPU ARM cores
 3. GPU memory bandwidth is preserved for embedding operations
 
-### 4.2 Trade-offs
+### 4.2 Trade-offs (Three-Way Comparison)
 
-| Factor | DPU-Based | GPU-Based |
-|:-------|:----------|:----------|
-| GPU Utilization | Lower (better for multi-tenant) | Higher |
-| DPU Utilization | Higher | Lower |
-| RDMA Data Volume | ~2 KB (tokens) | 8 KB (text) |
-| End-to-End Latency | Higher (sequential) | Lower |
-| Throughput Potential | Higher (GPU freed) | Lower |
+| Factor | DPU-Based | CPU-Based | GPU-Based |
+|:-------|:----------|:----------|:----------|
+| BPE Tokenization | **531 µs** | 2,680 µs | 9,235 µs |
+| GPU Utilization | Low | Low | High |
+| DPU Utilization | High | None | None |
+| Data Transfer | RDMA (2 KB) | PCIe (~2 KB) | RDMA (8 KB) |
+| End-to-End Latency | **Lowest** | Medium | Highest |
+| Complexity | Medium | Low | Medium |
 
 ### 4.3 When to Use Each Approach
 
 **Use DPU-Based when:**
+- Using GPT-2/LLaMA models (BPE tokenization)
 - GPU is the bottleneck (high inference load)
 - Running multiple inference streams
-- Need to maximize GPU throughput
-- DPU ARM cores are underutilized
+- DPU ARM cores are available
+
+**Use CPU-Based when:**
+- No DPU available
+- Simple deployment preferred
+- GPU should focus only on inference
 
 **Use GPU-Based when:**
-- DPU is the bottleneck
-- Single-stream low-latency is critical
-- Simpler deployment preferred
+- Using BERT models (WordPiece with RAPIDS nvtext)
+- DPU is unavailable
 
 ### 4.4 Scaling Considerations
 
