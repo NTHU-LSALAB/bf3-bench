@@ -66,29 +66,32 @@ Two algorithms were tested to evaluate different computational characteristics:
 
 ![Tokenization Comparison](charts/tokenization_comparison_3way.png)
 
-| Algorithm | DPU ARM | Host CPU | GPU | Best Platform |
-|:----------|:--------|:---------|:----|:--------------|
-| **BPE** | 531 µs | 2,680 µs | 9,235 µs | **DPU (17× vs GPU, 5× vs CPU)** |
-| **WordPiece** | 1,275 µs | 4,756 µs | 1,316 µs | **DPU/GPU (~equal)** |
+**Fair Comparison**: All platforms use the same Greedy Longest-Match algorithm for BPE.
+
+| Algorithm | Host CPU | DPU ARM | GPU | Best Platform |
+|:----------|:---------|:--------|:----|:--------------|
+| **BPE (Greedy)** | 332 µs | 531 µs | 9,235 µs | **Host CPU (28× vs GPU)** |
+| **WordPiece** | 4,756 µs | 1,275 µs | 1,316 µs | **DPU/GPU (~equal)** |
 
 ### BPE Speedup Analysis
 
 ![BPE Speedup](charts/bpe_speedup_3way.png)
 
-For sequential BPE tokenization (GPT-2/LLaMA models):
-- **DPU ARM is 17× faster than GPU** (sequential CUDA kernel)
-- **DPU ARM is 5× faster than Host CPU** (same HuggingFace backend)
+For sequential BPE tokenization (same Greedy algorithm on all platforms):
+- **Host CPU (x86) is 28× faster than GPU** - x86 excels at sequential work
+- **DPU ARM is 17× faster than GPU** - ARM also much better than GPU for sequential
+- **Host CPU is 1.6× faster than DPU** - x86 has better single-thread performance
 
 ### Pipeline Timeline (BPE)
 
 ![BPE Pipeline](charts/bpe_pipeline_3way.png)
 
-| Stage | DPU-Based | CPU-Based | GPU-Based |
+| Stage | CPU-Based | DPU-Based | GPU-Based |
 |:------|:----------|:----------|:----------|
-| Tokenization | 531 µs | 2,680 µs | 9,235 µs |
+| Tokenization | 332 µs | 531 µs | 9,235 µs |
 | RDMA Transfer | 1,011 µs | 1,011 µs | 1,011 µs |
 | GPU Embedding | 46 µs | 46 µs | 46 µs |
-| **Total** | **1,588 µs** | **3,737 µs** | **10,292 µs** |
+| **Total** | **1,389 µs** | **1,588 µs** | **10,292 µs** |
 
 ### End-to-End Latency Breakdown
 
@@ -106,33 +109,34 @@ For parallelizable WordPiece tokenization (BERT models):
 
 ## Implementation Details
 
-### Tokenizers
+### Tokenizers (Fair Comparison)
+
+BPE uses the **same Greedy Longest-Match algorithm** on all platforms:
 
 | Platform | Algorithm | Implementation | Time (8KB) |
 |:---------|:----------|:---------------|:-----------|
-| **DPU ARM** | BPE | C sequential (`bpe_tokenizer.c`) | 531 µs |
+| **Host CPU** | BPE | C Greedy (`host_cpu_greedy_tokenizer.c`) | 332 µs |
+| **DPU ARM** | BPE | C Greedy (`bpe_tokenizer.c`) | 531 µs |
+| **GPU** | BPE | CUDA Greedy (`tokenizer_kernel.cu`) | 9,235 µs |
 | **DPU ARM** | WordPiece | HuggingFace Tokenizers (Rust) | 1,275 µs |
-| **Host CPU** | BPE | HuggingFace Tokenizers (Rust) | 2,680 µs |
-| **Host CPU** | WordPiece | HuggingFace Tokenizers (Rust) | 4,756 µs |
-| **GPU** | BPE | CUDA sequential (`tokenizer_kernel.cu`) | 9,235 µs |
 | **GPU** | WordPiece | RAPIDS nvtext | 1,316 µs |
+| **Host CPU** | WordPiece | HuggingFace Tokenizers (Rust) | 4,756 µs |
+
+### Host CPU Greedy Tokenizer
+
+```c
+// benchmarks/host_cpu_greedy_tokenizer.c
+// Same algorithm as DPU: Greedy Longest-Match
+int num_tokens = greedy_tokenize(text, text_len, tokens, max_len);
+```
 
 ### DPU BPE Tokenizer
 
 ```c
 // src/dpu_client/bpe_tokenizer.c
 BPEContext ctx;
-bpe_init(&ctx, "vocab.json", "merges.txt");  // 50,257 tokens, 49,992 merges
+bpe_init(&ctx, "vocab.json", "merges.txt");  // 50,257 tokens
 int num_tokens = bpe_encode(&ctx, text, text_len, output_ids, max_len);
-```
-
-### Host CPU Benchmark
-
-```python
-# scripts/cpu_tokenizer_benchmark.py
-from tokenizers import Tokenizer
-tokenizer = Tokenizer.from_pretrained("gpt2")  # or "bert-base-uncased"
-result = tokenizer.encode(text)
 ```
 
 ### GPU Tokenizers
@@ -159,17 +163,19 @@ output[i] = word_embed[token_id] + pos_embed[position];
 
 ## Key Findings
 
-1. **BPE on DPU is optimal**: 17× faster than GPU, 5× faster than Host CPU
-   - Sequential algorithm doesn't benefit from GPU parallelism
-   - DPU ARM cores with optimized C code outperform all alternatives
+1. **Sequential BPE: CPU > DPU > GPU** (same Greedy algorithm)
+   - Host CPU (x86): 332 µs - best single-thread performance
+   - DPU ARM: 531 µs - 1.6× slower than x86
+   - GPU: 9,235 µs - 28× slower than x86 (sequential is terrible on GPU)
 
 2. **WordPiece: DPU ≈ GPU**: Both achieve ~1,300 µs
    - Parallelizable algorithm benefits from GPU (RAPIDS nvtext)
    - Choose based on system architecture preferences
 
-3. **Recommendation**:
-   - **GPT-2/LLaMA models**: Use DPU-based tokenization
-   - **BERT models**: Either DPU or GPU works well
+3. **Key Insight**:
+   - For **sequential algorithms** (BPE), use CPU or DPU, never GPU
+   - x86 CPU has best single-thread performance due to higher clock, better branch prediction
+   - DPU advantage is **offloading** (freeing CPU for other tasks) and **RDMA integration**
 
 ---
 
