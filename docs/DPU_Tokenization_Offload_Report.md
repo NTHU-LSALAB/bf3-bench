@@ -180,15 +180,16 @@ We implement **two production-grade tokenization algorithms**:
 
 | Scenario | Platform | Time | Implementation |
 |:---------|:---------|-----:|:---------------|
-| DPU-Based | DPU ARM | 1,275 µs | HuggingFace Rust |
-| GPU-Based | GPU CUDA | 1,316 µs | RAPIDS nvtext |
-| CPU-Based | Host CPU | 4,768 µs | HuggingFace Rust |
+| GPU-Based | GPU CUDA | 1,031 µs | RAPIDS nvtext |
+| CPU-Based | Host CPU | 4,688 µs | HuggingFace Rust |
+| DPU-Based | DPU ARM | 7,700 µs | HuggingFace Rust |
 
 #### Key Finding
 
 - **BPE (Greedy)**: Host CPU fastest (332 µs), then DPU (531 µs), GPU slowest (9,235 µs)
-- **WordPiece**: DPU and GPU are nearly identical (~1,300 µs)
+- **WordPiece**: GPU fastest (1,031 µs), then Host CPU (4,688 µs), DPU slowest (7,700 µs)
 - **GPU is terrible** for sequential algorithms (28× slower than CPU)
+- **GPU excels** at parallelizable algorithms (4.5× faster than CPU)
 - **DPU advantage**: Offloading frees CPU, direct RDMA to GPU
 
 
@@ -327,10 +328,10 @@ We tested both GPU-optimized WordPiece (RAPIDS nvtext) and DPU BPE for 8KB paylo
 
 **WordPiece (BERT compatible):**
 | Platform | Tokenization Time | Implementation |
-|:---------|:------------------|:---------------|
-| DPU | 1,275 µs | HuggingFace Tokenizers (Rust) |
-| GPU | 1,316 µs | RAPIDS nvtext |
-| **Speedup** | **~1×** (nearly identical) | |
+|:---------|------------------:|:---------------|
+| GPU | **1,031 µs** | RAPIDS nvtext |
+| Host CPU | 4,688 µs | HuggingFace Tokenizers (Rust) |
+| DPU | 7,700 µs | HuggingFace Tokenizers (Rust) |
 
 **BPE (GPT-2 compatible, Same Greedy Algorithm):**
 | Platform | Tokenization Time | Speedup vs GPU |
@@ -342,8 +343,8 @@ We tested both GPU-optimized WordPiece (RAPIDS nvtext) and DPU BPE for 8KB paylo
 #### Analysis
 
 - **BPE**: Host CPU fastest due to x86 single-thread performance, GPU is 28× slower
-- **WordPiece**: DPU and GPU are nearly identical (~1,300 µs)
-- **Key Insight**: Sequential algorithms should never run on GPU
+- **WordPiece**: GPU fastest (1,031 µs), 4.5× faster than Host CPU
+- **Key Insight**: Sequential algorithms → CPU; Parallelizable algorithms → GPU
 - **DPU Advantage**: Offloading (frees CPU), RDMA integration, not raw speed
 
 
@@ -362,17 +363,17 @@ We tested both GPU-optimized WordPiece (RAPIDS nvtext) and DPU BPE for 8KB paylo
 
 3. **DPU advantage is offloading**: Frees CPU for other tasks, RDMA integration
 
-4. **WordPiece on GPU is viable**: RAPIDS nvtext achieves ~1,300 µs (same as DPU)
+4. **WordPiece on GPU is optimal**: RAPIDS nvtext achieves 1,031 µs (4.5× faster than CPU)
 
 ### 5.2 Recommendations
 
-1. **For Lowest Latency**: Use Host CPU tokenization (332 µs)
+1. **For BPE (Sequential)**: Use Host CPU tokenization (332 µs)
 
-2. **For CPU Offloading**: Use DPU-Based tokenization to free CPU resources
+2. **For WordPiece (Parallelizable)**: Use GPU with RAPIDS nvtext (1,031 µs)
 
-3. **For BERT Models**: Either DPU or GPU WordPiece (~1,300 µs)
+3. **For CPU Offloading**: Use DPU-Based tokenization to free CPU resources
 
-4. **Never use GPU for BPE**: 28× slower than CPU
+4. **Never use GPU for BPE**: 28× slower than CPU (sequential algorithm)
 
 ### 5.3 Future Work
 
