@@ -60,19 +60,21 @@ The Greedy Longest-Match algorithm:
 
 | Platform | Implementation | Time (µs) | Tokens | Notes |
 |:---------|:---------------|----------:|-------:|:------|
-| **DPU ARM** | HuggingFace (Rust) | 1,275 | ~2,000 | Optimized Rust |
+| **DPU ARM** | HuggingFace (Rust) | 1,275 | ~2,000 | **Needs verification** |
 | **GPU** | RAPIDS nvtext | 1,316 | ~2,000 | GPU-accelerated |
-| **Host CPU** | HuggingFace (Rust) | 4,768 | ~2,000 | Same as DPU |
+| **Host CPU** | HuggingFace (Rust) | 4,768 | ~2,000 | Actual benchmark |
 
 ### Analysis
 
-1. **DPU and GPU are nearly equal** (~1,300 µs)
-   - Both use highly optimized implementations
-   - GPU benefits from parallel nvtext library
+1. **GPU uses RAPIDS nvtext** (1,316 µs) - GPU-accelerated WordPiece
 
-2. **Host CPU is slower** (4,768 µs)
-   - Same HuggingFace library as DPU
-   - Difference may be due to test conditions or caching
+2. **DPU number (1,275 µs) needs verification**
+   - No DPU WordPiece benchmark exists in codebase
+   - Number may be estimated or from previous test conditions
+
+3. **Host CPU (4,768 µs) uses HuggingFace**
+   - Actual benchmark result from this codebase
+   - If DPU uses same library, Host CPU should be faster (x86 > ARM)
 
 ---
 

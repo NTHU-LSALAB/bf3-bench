@@ -194,13 +194,14 @@ def chart_pipeline_timeline():
                  fontsize=14, fontweight='bold')
     ax.set_xlim(0, 12000)
 
-    # Legend
+    # Legend at top
     legend_patches = [
         mpatches.Patch(color=colors['tokenize'], label='Tokenization'),
         mpatches.Patch(color=colors['rdma'], label='RDMA Transfer'),
         mpatches.Patch(color=colors['gpu'], label='GPU Embedding'),
     ]
-    ax.legend(handles=legend_patches, loc='upper right', fontsize=10)
+    ax.legend(handles=legend_patches, loc='upper center', bbox_to_anchor=(0.5, 1.15),
+              ncol=3, fontsize=10, frameon=True)
 
     plt.tight_layout()
     plt.savefig(f'{CHART_DIR}/bpe_pipeline_3way.png', dpi=150, bbox_inches='tight')
@@ -320,7 +321,7 @@ def chart_latency_breakdown():
                  fontsize=14, fontweight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(scenarios, fontsize=12)
-    ax.legend(loc='upper right', fontsize=10)
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.02), ncol=3, fontsize=10, frameon=True)
     ax.set_ylim(0, max(totals) * 1.15)
     ax.grid(axis='y', alpha=0.3)
 

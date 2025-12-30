@@ -22,13 +22,16 @@ This project explores offloading tokenization to the NVIDIA BlueField-3 DPU. By 
 | Network | PCIe Gen4 x16, GPUDirect RDMA |
 
 ```
-┌────────────────────┐                    ┌─────────────────────────────────┐
-│   BlueField-3 DPU  │   PCIe Gen4 x16    │         Host System             │
-│    (ARM Cores)     │◄──────────────────►│  ┌─────────┐    ┌───────────┐  │
-│   192.168.200.2    │  GPUDirect RDMA    │  │ Host CPU│    │ A100X GPU │  │
-└────────────────────┘                    │  └─────────┘    └───────────┘  │
-                                          │  192.168.200.1                  │
-                                          └─────────────────────────────────┘
+┌────────────────────┐                    ┌─────────────────────────────────────┐
+│   BlueField-3 DPU  │   PCIe Gen4 x16    │           Host System               │
+│    (ARM Cores)     │◄──────────────────►│                                     │
+│   192.168.200.2    │  GPUDirect RDMA    │  ┌─────────┐  PCIe   ┌───────────┐  │
+│                    │         │          │  │ Host CPU│◄───────►│ A100X GPU │  │
+└────────────────────┘         │          │  └─────────┘         └───────────┘  │
+                               │          │       │                    ▲        │
+                               └──────────┼───────┼────────────────────┘        │
+                                          │  192.168.200.1                      │
+                                          └─────────────────────────────────────┘
 ```
 
 ---
@@ -103,7 +106,7 @@ For sequential BPE tokenization (same Greedy algorithm on all platforms):
 
 For parallelizable WordPiece tokenization (BERT models):
 - DPU and GPU achieve similar performance (~1,300 µs)
-- Host CPU is slower (4,756 µs) due to lack of GPU acceleration
+- Host CPU result (4,756 µs) uses the same HuggingFace library as DPU - discrepancy under investigation
 
 ---
 
