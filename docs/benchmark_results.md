@@ -60,21 +60,20 @@ The Greedy Longest-Match algorithm:
 
 | Platform | Implementation | Time (µs) | Tokens | Notes |
 |:---------|:---------------|----------:|-------:|:------|
-| **DPU ARM** | HuggingFace (Rust) | 1,275 | ~2,000 | **Needs verification** |
-| **GPU** | RAPIDS nvtext | 1,316 | ~2,000 | GPU-accelerated |
-| **Host CPU** | HuggingFace (Rust) | 4,768 | ~2,000 | Actual benchmark |
+| **GPU** | RAPIDS nvtext | 1,031 | ~2,000 | GPU-accelerated |
+| **Host CPU** | HuggingFace (Rust) | 4,688 | ~4,500 | Actual benchmark |
+| **DPU ARM** | HuggingFace (Rust) | 7,700 | ~4,500 | Actual benchmark |
 
 ### Analysis
 
-1. **GPU uses RAPIDS nvtext** (1,316 µs) - GPU-accelerated WordPiece
+1. **GPU (RAPIDS nvtext) is fastest** (1,031 µs)
+   - Optimized GPU library for WordPiece
+   - Parallelizable algorithm benefits from GPU acceleration
 
-2. **DPU number (1,275 µs) needs verification**
-   - No DPU WordPiece benchmark exists in codebase
-   - Number may be estimated or from previous test conditions
-
-3. **Host CPU (4,768 µs) uses HuggingFace**
-   - Actual benchmark result from this codebase
-   - If DPU uses same library, Host CPU should be faster (x86 > ARM)
+2. **Host CPU (x86) is 1.6× faster than DPU (ARM)**
+   - Both use same HuggingFace Tokenizers (Rust) library
+   - x86 has better single-thread performance than ARM Cortex-A78
+   - Host CPU: 4,688 µs vs DPU: 7,700 µs
 
 ---
 
@@ -105,7 +104,7 @@ Complete pipeline with tokenization + RDMA + GPU embedding:
 
 ## Key Findings
 
-### 1. Sequential Algorithm Performance
+### 1. Sequential Algorithm Performance (BPE)
 
 For sequential algorithms like Greedy BPE:
 ```
@@ -113,21 +112,28 @@ Host CPU (x86) > DPU ARM > GPU
     332 µs       531 µs    9,235 µs
 ```
 
-### 2. When to Use Each Platform
+### 2. Parallelizable Algorithm Performance (WordPiece)
+
+For parallelizable algorithms like WordPiece:
+```
+GPU (nvtext) >> Host CPU (x86) > DPU ARM
+   1,031 µs       4,688 µs       7,700 µs
+```
+
+### 3. When to Use Each Platform
 
 | Use Case | Recommended | Reason |
 |:---------|:------------|:-------|
-| Lowest latency | Host CPU | Best single-thread perf |
+| Sequential BPE | Host CPU | Best single-thread perf (332 µs) |
+| WordPiece (BERT) | GPU | RAPIDS nvtext is 4.5× faster (1,031 µs) |
 | CPU offloading | DPU | Frees CPU resources |
-| Parallel algorithms | GPU | SIMD acceleration |
 | RDMA integration | DPU | Direct network-to-GPU |
 
-### 3. GPU is Bad for Sequential Work
+### 4. Algorithm Matters More Than Platform
 
-Never use GPU for sequential tokenization:
-- 28× slower than CPU
-- 17× slower than DPU
-- Wastes GPU resources that could run inference
+- **Sequential algorithms** (BPE): CPU >> DPU >> GPU
+- **Parallelizable algorithms** (WordPiece): GPU >> CPU > DPU
+- Never use GPU for sequential tokenization (28× slower than CPU)
 
 ---
 
@@ -135,10 +141,12 @@ Never use GPU for sequential tokenization:
 
 | File | Description |
 |:-----|:------------|
-| `benchmarks/host_cpu_greedy_tokenizer.c` | Host CPU greedy benchmark |
-| `src/dpu_client/bpe_tokenizer.c` | DPU ARM greedy tokenizer |
-| `src/host_server/tokenizer_kernel.cu` | GPU CUDA greedy tokenizer |
-| `scripts/cpu_tokenizer_benchmark.py` | HuggingFace benchmark |
+| `benchmarks/host_cpu_greedy_tokenizer.c` | Host CPU greedy BPE benchmark |
+| `src/dpu_client/bpe_tokenizer.c` | DPU ARM greedy BPE tokenizer |
+| `src/host_server/tokenizer_kernel.cu` | GPU CUDA greedy BPE tokenizer |
+| `scripts/wordpiece_benchmark.py` | WordPiece benchmark (CPU/DPU) |
+| `scripts/wordpiece_benchmark_gpu.py` | WordPiece benchmark (GPU nvtext) |
+| `scripts/cpu_tokenizer_benchmark.py` | HuggingFace BPE benchmark |
 | `scripts/generate_charts_v4.py` | Chart generator |
 
 ---

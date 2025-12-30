@@ -74,7 +74,7 @@ Two algorithms were tested to evaluate different computational characteristics:
 | Algorithm | Host CPU | DPU ARM | GPU | Best Platform |
 |:----------|:---------|:--------|:----|:--------------|
 | **BPE (Greedy)** | 332 µs | 531 µs | 9,235 µs | **Host CPU (28× vs GPU)** |
-| **WordPiece** | 4,756 µs | 1,275 µs | 1,316 µs | **DPU/GPU (~equal)** |
+| **WordPiece** | 4,688 µs | 7,700 µs | 1,031 µs | **GPU (4.5× vs CPU)** |
 
 ### BPE Speedup Analysis
 
@@ -105,8 +105,9 @@ For sequential BPE tokenization (same Greedy algorithm on all platforms):
 ![WordPiece Comparison](charts/wordpiece_comparison_3way.png)
 
 For parallelizable WordPiece tokenization (BERT models):
-- DPU and GPU achieve similar performance (~1,300 µs)
-- Host CPU result (4,756 µs) uses the same HuggingFace library as DPU - discrepancy under investigation
+- **GPU (RAPIDS nvtext) is fastest**: 1,031 µs - optimized GPU library
+- **Host CPU (x86)**: 4,688 µs - HuggingFace Tokenizers
+- **DPU ARM**: 7,700 µs - same HuggingFace library, ARM is 1.6× slower than x86
 
 ---
 
@@ -121,9 +122,9 @@ BPE uses the **same Greedy Longest-Match algorithm** on all platforms:
 | **Host CPU** | BPE | C Greedy (`host_cpu_greedy_tokenizer.c`) | 332 µs |
 | **DPU ARM** | BPE | C Greedy (`bpe_tokenizer.c`) | 531 µs |
 | **GPU** | BPE | CUDA Greedy (`tokenizer_kernel.cu`) | 9,235 µs |
-| **DPU ARM** | WordPiece | HuggingFace Tokenizers (Rust) | 1,275 µs |
-| **GPU** | WordPiece | RAPIDS nvtext | 1,316 µs |
-| **Host CPU** | WordPiece | HuggingFace Tokenizers (Rust) | 4,756 µs |
+| **GPU** | WordPiece | RAPIDS nvtext | 1,031 µs |
+| **Host CPU** | WordPiece | HuggingFace Tokenizers (Rust) | 4,688 µs |
+| **DPU ARM** | WordPiece | HuggingFace Tokenizers (Rust) | 7,700 µs |
 
 ### Host CPU Greedy Tokenizer
 
@@ -171,12 +172,14 @@ output[i] = word_embed[token_id] + pos_embed[position];
    - DPU ARM: 531 µs - 1.6× slower than x86
    - GPU: 9,235 µs - 28× slower than x86 (sequential is terrible on GPU)
 
-2. **WordPiece: DPU ≈ GPU**: Both achieve ~1,300 µs
-   - Parallelizable algorithm benefits from GPU (RAPIDS nvtext)
-   - Choose based on system architecture preferences
+2. **WordPiece: GPU >> CPU > DPU** (different implementations)
+   - GPU (RAPIDS nvtext): 1,031 µs - optimized GPU library wins
+   - Host CPU (HuggingFace): 4,688 µs
+   - DPU ARM (HuggingFace): 7,700 µs - ARM 1.6× slower than x86
 
 3. **Key Insight**:
    - For **sequential algorithms** (BPE), use CPU or DPU, never GPU
+   - For **parallelizable algorithms** (WordPiece), GPU with optimized libraries wins
    - x86 CPU has best single-thread performance due to higher clock, better branch prediction
    - DPU advantage is **offloading** (freeing CPU for other tasks) and **RDMA integration**
 

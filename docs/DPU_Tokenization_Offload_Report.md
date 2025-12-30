@@ -240,16 +240,16 @@ We implement **two production-grade tokenization algorithms**:
 
 | Algorithm | DPU ARM | Host CPU | GPU | Best Platform |
 |:----------|:--------|:---------|:----|:--------------|
-| **BPE** | 531 µs | 2,680 µs | 9,235 µs | **DPU (17× vs GPU)** |
-| **WordPiece** | 1,275 µs | 4,756 µs | 1,316 µs | **DPU/GPU (~equal)** |
+| **BPE (Greedy)** | 531 µs | 332 µs | 9,235 µs | **Host CPU (28× vs GPU)** |
+| **WordPiece** | 7,700 µs | 4,688 µs | 1,031 µs | **GPU (4.5× vs CPU)** |
 
 ### 3.3 BPE Pipeline Timeline (Three-Way)
 
 ![BPE Pipeline](../charts/bpe_pipeline_3way.png)
 
 The timeline visualization shows:
-- **DPU-Based**: Fastest total latency (1,588 µs)
-- **CPU-Based**: Middle ground (3,737 µs)
+- **CPU-Based**: Fastest total latency (1,389 µs) - x86 Greedy BPE
+- **DPU-Based**: Second fastest (1,588 µs) - ARM Greedy BPE
 - **GPU-Based**: Slowest due to sequential BPE on GPU (10,292 µs)
 
 ### 3.4 BPE Speedup Analysis

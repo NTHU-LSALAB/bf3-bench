@@ -8,10 +8,10 @@ Fair Comparison Results (8KB Payload, Same Algorithm):
     - Host CPU: 332 µs (x86 C implementation)
     - DPU ARM: 531 µs (ARM C implementation)
     - GPU: 9,235 µs (CUDA single-thread)
-  WordPiece:
-    - DPU ARM: 1,275 µs (HuggingFace Rust)
+  WordPiece (HuggingFace Tokenizers):
+    - Host CPU: 4,688 µs (x86)
+    - DPU ARM: 7,700 µs (ARM)
     - GPU: 1,316 µs (RAPIDS nvtext)
-    - Host CPU: 4,756 µs (HuggingFace Rust)
 """
 
 import matplotlib.pyplot as plt
@@ -31,9 +31,9 @@ RESULTS = {
         'GPU': {'time': 9235, 'impl': 'CUDA Greedy'},
     },
     'wordpiece': {
-        'DPU ARM': {'time': 1275, 'impl': 'HuggingFace (Rust)'},
-        'GPU': {'time': 1316, 'impl': 'RAPIDS nvtext'},
-        'Host CPU': {'time': 4756, 'impl': 'HuggingFace (Rust)'},
+        'GPU': {'time': 1031, 'impl': 'RAPIDS nvtext'},
+        'Host CPU': {'time': 4688, 'impl': 'HuggingFace (Rust)'},
+        'DPU ARM': {'time': 7700, 'impl': 'HuggingFace (Rust)'},
     }
 }
 
@@ -235,11 +235,11 @@ def chart_wordpiece_comparison():
     ax.grid(axis='y', alpha=0.3)
 
     # Annotation
-    ax.annotate('DPU and GPU are nearly identical\n(both use optimized implementations)',
-                xy=(0.5, min(times)), xytext=(1.5, min(times) + 1500),
+    ax.annotate('GPU (RAPIDS nvtext) is fastest\nfor parallelizable WordPiece',
+                xy=(0, min(times)), xytext=(1.2, min(times) + 2000),
                 fontsize=10, ha='center',
-                bbox=dict(boxstyle='round', facecolor='#E8F5E9', edgecolor='#4CAF50'),
-                arrowprops=dict(arrowstyle='->', color='#4CAF50'))
+                bbox=dict(boxstyle='round', facecolor='#FFEBEE', edgecolor='#FF5722'),
+                arrowprops=dict(arrowstyle='->', color='#FF5722'))
 
     plt.tight_layout()
     plt.savefig(f'{CHART_DIR}/wordpiece_comparison_3way.png', dpi=150, bbox_inches='tight')
@@ -256,7 +256,7 @@ def chart_summary_table():
     columns = ['Algorithm', 'Host CPU', 'DPU ARM', 'GPU', 'Best Platform']
     rows = [
         ['BPE (Greedy)', '332 µs', '531 µs', '9,235 µs', 'Host CPU (28× vs GPU)'],
-        ['WordPiece', '4,756 µs', '1,275 µs', '1,316 µs', 'DPU/GPU (~equal)'],
+        ['WordPiece', '4,688 µs', '7,700 µs', '1,031 µs', 'GPU (4.5× vs CPU)'],
     ]
 
     table = ax.table(
@@ -273,8 +273,7 @@ def chart_summary_table():
 
     # Highlight best cells
     table[(1, 1)].set_facecolor('#C8E6C9')  # Host CPU BPE (best)
-    table[(2, 2)].set_facecolor('#C8E6C9')  # DPU WordPiece
-    table[(2, 3)].set_facecolor('#C8E6C9')  # GPU WordPiece
+    table[(2, 3)].set_facecolor('#C8E6C9')  # GPU WordPiece (best)
 
     plt.title('Tokenization Performance Summary (8KB Payload)\nBPE uses same Greedy algorithm on all platforms',
               fontsize=16, fontweight='bold', pad=20)
